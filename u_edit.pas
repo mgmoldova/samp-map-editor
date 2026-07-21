@@ -4542,8 +4542,9 @@ end;
 
 procedure TGtaEditor.btn_iplClick(Sender: TObject);
 var
-  i, l: integer;
+  i, l, materialobject: integer;
   rotx, roty, rotz: string;
+  materialsini: TIniFile;
 begin
 
   if SaveDialog2.Execute = False then
@@ -4612,6 +4613,22 @@ begin
 
 
   readwriter.Lines.SaveToFile(changefileext(SaveDialog2.filename, '.ipl'));
+
+  materialsini := TIniFile.Create(changefileext(SaveDialog2.filename, '.materials.ini'));
+  try
+    materialobject := 0;
+    for L := 0 to high(city.IPL) do
+      for i := 0 to high(city.IPL[L].InstObjects) do
+        with city.IPL[L].InstObjects[i] do
+          if (deleted = False) and (added = True) then
+          begin
+            SaveMaterials(materialsini, 'Object' + IntToStr(materialobject));
+            Inc(materialobject);
+          end;
+    materialsini.WriteInteger('Materials', 'ObjectCount', materialobject);
+  finally
+    materialsini.Free;
+  end;
 
 end;
 
@@ -5108,12 +5125,48 @@ end;
 
 procedure TGtaEditor.gencode();
 var
-  i, l:   integer;
-  ftext:  string;
+  i, l, m, imgidx, txdidx, textureidx: integer;
+  ftext, objectvar, createfunc, materialfunc: string;
   center: t3drect;
   realcenter: TVector3f;
-begin
+  warnings: TStringList;
 
+  function PawnEscape(const value: string): string;
+  begin
+    Result := StringReplace(value, '\', '\\', [rfReplaceAll]);
+    Result := StringReplace(Result, '"', '\"', [rfReplaceAll]);
+  end;
+
+  function TXDExists(const txdname: string): boolean;
+  begin
+    Result := False;
+    for imgidx := 0 to high(city.imglist) do
+      if city.imglist[imgidx] <> nil then
+        if city.imglist[imgidx].IndexOf(lowercase(ChangeFileExt(txdname, '.txd'))) <> -1 then
+        begin
+          Result := True;
+          exit;
+        end;
+  end;
+
+  function TextureExists(const txdname, texturename: string): boolean;
+  begin
+    Result := False;
+    for txdidx := 0 to GtaObject.ComponentCount - 1 do
+      if GtaObject.Components[txdidx] <> nil then
+        if GtaObject.Components[txdidx] is TTxdUnit then
+          with GtaObject.Components[txdidx] as TTxdUnit do
+            if (texture <> nil) and
+               (SameText(filename, ChangeFileExt(txdname, ''))) then
+              for textureidx := 0 to high(texture.textures) do
+                if SameText(texture.textures[textureidx].Name, texturename) then
+                begin
+                  Result := True;
+                  exit;
+                end;
+  end;
+
+begin
   wnd_showcode.readwriter.Lines.Clear;
   wnd_showcode.lin_cars.Lines.Clear;
   DecimalSeparator := '.';
@@ -5126,61 +5179,89 @@ begin
   if wnd_showcode.CDO.Checked = True then
     ftext := 'CreateDynamicObject(%d, %0.5f, %0.5f, %0.5f,   %0.5f, %0.5f, %0.5f);';
 
-  // #1: calculate center of objects, #2: use that as relative coords for stuff.
   if wnd_showcode.CheckBox2.Checked = True then
   begin
-    center     := calculatecenterofmapping;
+    center := calculatecenterofmapping;
     realcenter := center[0];
-
     realcenter[0] := realcenter[0] + ((center[1][0] - center[0][0]) * 0.5);
     realcenter[1] := realcenter[1] + ((center[1][1] - center[0][1]) * 0.5);
     realcenter[2] := realcenter[2] + ((center[1][2] - center[0][2]) * 0.5);
-
   end;
 
-  for L := 0 to high(city.IPL) do
-  begin
-    for i := 0 to high(city.IPL[L].InstObjects) do
-    begin
-
-      with city.IPL[L].InstObjects[i] do
-      begin
-
-        if (deleted = False) and (added = True) then
+  warnings := TStringList.Create;
+  try
+    for L := 0 to high(city.IPL) do
+      for i := 0 to high(city.IPL[L].InstObjects) do
+        with city.IPL[L].InstObjects[i] do
         begin
-
-          if (id <= 611) and (id >= 400) then
-            wnd_showcode.lin_cars.Lines.add(format('CreateVehicle(%d, %0.4f, %0.4f, %0.4f, %0.4f, %d, %d, %d);', [id, Location[0], Location[1], Location[2], ruz, -1, -1, 100]))
-          else
+          if (deleted = False) and (added = True) then
           begin
-
-            if wnd_showcode.CheckBox2.Checked = True then
-            begin
-              wnd_showcode.readwriter.Lines.add(format(ftext, [id, Location[0] - realcenter[0], Location[1] - realcenter[1], Location[2] - realcenter[2], rux, ruy, ruz]));
-            end
+            if (id <= 611) and (id >= 400) then
+              wnd_showcode.lin_cars.Lines.add(format('CreateVehicle(%d, %0.4f, %0.4f, %0.4f, %0.4f, %d, %d, %d);', [id, Location[0], Location[1], Location[2], ruz, -1, -1, 100]))
             else
-              wnd_showcode.readwriter.Lines.add(format(ftext, [id, Location[0], Location[1], Location[2], rux, ruy, ruz]));
+            begin
+              if (length(materials) = 0) or wnd_showcode.CheckBox1.Checked then
+              begin
+                if wnd_showcode.CheckBox2.Checked = True then
+                  wnd_showcode.readwriter.Lines.add(format(ftext, [id, Location[0] - realcenter[0], Location[1] - realcenter[1], Location[2] - realcenter[2], rux, ruy, ruz]))
+                else
+                  wnd_showcode.readwriter.Lines.add(format(ftext, [id, Location[0], Location[1], Location[2], rux, ruy, ruz]));
 
+                if (length(materials) > 0) and wnd_showcode.CheckBox1.Checked then
+                  warnings.Add(format('Object %d: materials are not available in raw coordinate-list mode.', [id]));
+              end
+              else
+              begin
+                objectvar := format('mapobject_%d_%d', [L, i]);
+                if wnd_showcode.CDO.Checked then
+                begin
+                  createfunc := 'CreateDynamicObject';
+                  materialfunc := 'SetDynamicObjectMaterial';
+                end
+                else
+                begin
+                  createfunc := 'CreateObject';
+                  materialfunc := 'SetObjectMaterial';
+                end;
+
+                if wnd_showcode.CheckBox2.Checked = True then
+                  wnd_showcode.readwriter.Lines.add(format('new %s = %s(%d, %0.5f, %0.5f, %0.5f,   %0.5f, %0.5f, %0.5f);',
+                    [objectvar, createfunc, id, Location[0] - realcenter[0], Location[1] - realcenter[1], Location[2] - realcenter[2], rux, ruy, ruz]))
+                else
+                  wnd_showcode.readwriter.Lines.add(format('new %s = %s(%d, %0.5f, %0.5f, %0.5f,   %0.5f, %0.5f, %0.5f);',
+                    [objectvar, createfunc, id, Location[0], Location[1], Location[2], rux, ruy, ruz]));
+
+                for m := 0 to high(materials) do
+                begin
+                  if (materials[m].materialindex < 0) or (materials[m].materialindex > 15) then
+                    warnings.Add(format('Object %d material %d: material index %d is outside 0..15.',
+                      [id, m, materials[m].materialindex]));
+
+                  if not TXDExists(materials[m].txdname) then
+                    warnings.Add(format('Object %d material %d: TXD "%s" was not found in loaded IMG archives.',
+                      [id, m, materials[m].txdname]))
+                  else if not TextureExists(materials[m].txdname, materials[m].texturename) then
+                    warnings.Add(format('Object %d material %d: texture "%s" is not currently loaded from TXD "%s"; verify it before using the export.',
+                      [id, m, materials[m].texturename, materials[m].txdname]));
+
+                  wnd_showcode.readwriter.Lines.add(format('%s(%s, %d, %d, "%s", "%s", %s);',
+                    [materialfunc, objectvar, materials[m].materialindex, materials[m].modelid,
+                     PawnEscape(materials[m].txdname), PawnEscape(materials[m].texturename),
+                     '0x' + IntToHex(materials[m].materialcolor, 8)]));
+                end;
+              end;
+            end;
           end;
+
+          if (deleted = True) and (added = False) then
+            wnd_showcode.readwriter.Lines.add(format('RemoveBuildingForPlayer(playerid, %d, %0.4f, %0.4f, %0.4f, 0.25);', [id, Location[0], Location[1], Location[2]]));
         end;
 
-
-        if (deleted = True) and (added = False) then
-        begin
-          // remove map object
-          wnd_showcode.readwriter.Lines.add(format('RemoveBuildingForPlayer(playerid, %d, %0.4f, %0.4f, %0.4f, 0.25);', [id, Location[0], Location[1], Location[2]]));
-
-{
-          if lod <> -1 then
-						wnd_showcode.readwriter.Lines.add(format('RemoveBuildingForPlayer(playerid, %d, %0.4f, %0.4f, %0.4f, 0.25); // lod for %d', [city.IPL[selipl].InstObjects[lod].id, city.IPL[selipl].InstObjects[lod].Location[0], city.IPL[selipl].InstObjects[lod].Location[1], city.IPL[selipl].InstObjects[lod].Location[2], id]));
-}
-        end;
-
-      end;
-
-    end;
+    if warnings.Count > 0 then
+      MessageDlg('Material export warnings:' + #13#10 + warnings.Text, mtWarning, [mbOK], 0);
+  finally
+    warnings.Free;
   end;
-
 end;
 
 procedure TGtaEditor.btn_showcodeClick(Sender: TObject);
