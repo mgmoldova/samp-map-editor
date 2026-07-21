@@ -53,6 +53,17 @@ type
     fromtxd, totxd: string;
   end;
 
+  TObjectMaterial = class
+  public
+    materialindex: integer;
+    modelid: integer;
+    txdname: string;
+    texturename: string;
+    materialcolor: longword;
+    constructor Create;
+    procedure Assign(Source: TObjectMaterial);
+  end;
+
   TOBJS = class // and TOBJ
     ID: longword;
 
@@ -87,8 +98,15 @@ type
     carcolor1,carcolor2: integer;
 
     visibility: boolean;
+    materials: array of TObjectMaterial;
 
     constructor create;
+    destructor Destroy; override;
+    function AddMaterial: TObjectMaterial;
+    procedure DeleteMaterial(index: integer);
+    procedure ClearMaterials;
+    procedure SaveMaterials(ini: TCustomIniFile; const section: string);
+    procedure LoadMaterials(ini: TCustomIniFile; const section: string);
     procedure SetGTARotation(x, y, z: single);
 
   end;
@@ -128,6 +146,8 @@ type
     procedure loadfromfile(filen: string);
     procedure loadfrombinfile(filen: string);
     procedure processlodinfo;
+    procedure SaveMaterialsToFile(const filen: string);
+    procedure LoadMaterialsFromFile(const filen: string);
   end;
 
 Tiplinst = packed record
@@ -981,6 +1001,9 @@ begin
 
   end;
 
+  ipllist.Free;
+  LoadMaterialsFromFile(ChangeFileExt(filen, '.materials.ini'));
+
 end;
 
 procedure ConvertNonNormaQuatToEuler(qw, qx, qy, qz: single; var heading, attitude, bank: single);
@@ -1268,13 +1291,174 @@ begin
 
 end;
 
+{ TObjectMaterial }
+
+constructor TObjectMaterial.Create;
+begin
+  materialindex := 0;
+  modelid := 0;
+  txdname := '';
+  texturename := '';
+  materialcolor := 0;
+end;
+
+procedure TObjectMaterial.Assign(Source: TObjectMaterial);
+begin
+  materialindex := Source.materialindex;
+  modelid := Source.modelid;
+  txdname := Source.txdname;
+  texturename := Source.texturename;
+  materialcolor := Source.materialcolor;
+end;
+
 { TINST }
 
 constructor TINST.create;
 begin
-rux:= 0;
-ruy:= 0;
-ruz:= 0;
+  rux:= 0;
+  ruy:= 0;
+  ruz:= 0;
+  setlength(materials, 0);
+end;
+
+destructor TINST.Destroy;
+begin
+  ClearMaterials;
+  inherited;
+end;
+
+function TINST.AddMaterial: TObjectMaterial;
+begin
+  setlength(materials, length(materials) + 1);
+  materials[high(materials)] := TObjectMaterial.Create;
+  Result := materials[high(materials)];
+end;
+
+procedure TINST.DeleteMaterial(index: integer);
+var
+  i: integer;
+begin
+  if (index < 0) or (index > high(materials)) then
+    exit;
+  materials[index].Free;
+  for i := index to high(materials) - 1 do
+    materials[i] := materials[i + 1];
+  setlength(materials, length(materials) - 1);
+end;
+
+procedure TINST.ClearMaterials;
+var
+  i: integer;
+begin
+  for i := 0 to high(materials) do
+    materials[i].Free;
+  setlength(materials, 0);
+end;
+
+procedure TINST.SaveMaterials(ini: TCustomIniFile; const section: string);
+var
+  i: integer;
+  prefix: string;
+begin
+  ini.EraseSection(section);
+  ini.WriteInteger(section, 'Count', length(materials));
+  for i := 0 to high(materials) do
+  begin
+    prefix := 'Material' + IntToStr(i) + '.';
+    ini.WriteInteger(section, prefix + 'Index', materials[i].materialindex);
+    ini.WriteInteger(section, prefix + 'Model', materials[i].modelid);
+    ini.WriteString(section, prefix + 'TXD', materials[i].txdname);
+    ini.WriteString(section, prefix + 'Texture', materials[i].texturename);
+    ini.WriteString(section, prefix + 'Color', IntToHex(materials[i].materialcolor, 8));
+  end;
+end;
+
+procedure TINST.LoadMaterials(ini: TCustomIniFile; const section: string);
+var
+  i, count: integer;
+  prefix, color: string;
+  material: TObjectMaterial;
+begin
+  ClearMaterials;
+  count := ini.ReadInteger(section, 'Count', 0);
+  for i := 0 to count - 1 do
+  begin
+    material := AddMaterial;
+    prefix := 'Material' + IntToStr(i) + '.';
+    material.materialindex := ini.ReadInteger(section, prefix + 'Index', 0);
+    material.modelid := ini.ReadInteger(section, prefix + 'Model', id);
+    material.txdname := ini.ReadString(section, prefix + 'TXD', '');
+    material.texturename := ini.ReadString(section, prefix + 'Texture', '');
+    color := ini.ReadString(section, prefix + 'Color', '00000000');
+    material.materialcolor := longword(StrToInt64Def('
+
+procedure TINST.SetGTARotation(x, y, z: single);
+var
+  tma, tmn: TMatrix3f;
+  a, b: integer;
+  ms: Tmemorystream;
+begin
+
+rux:= x;
+ruy:= y;
+ruz:= z;
+
+tma:= gtarot2matrix3x3(degtorad(x), degtorad(y), degtorad(z));
+
+  for a := 0 to 2 do
+    for b := 0 to 2 do
+      tmn[a, b] := tma[a, b]; // transpose!
+
+{      ms:= Tmemorystream.create;
+      ms.Write(tmn, sizeof(tmn));
+      ms.SaveToFile('c:\tadaa.dmp');}
+
+matrix3f2quaternion(tmn, rx, ry, rz, rw);
+end;
+
+var i: integer;
+
+initialization
+
+for i:= 0 to high(mainidelist) do
+	mainidelist[i]:= nil;
+
+end.
+
+ + color, 0));
+  end;
+end;
+
+procedure TIPLFILE.SaveMaterialsToFile(const filen: string);
+var
+  ini: TIniFile;
+  i: integer;
+begin
+  ini := TIniFile.Create(filen);
+  try
+    ini.WriteInteger('Materials', 'ObjectCount', length(InstObjects));
+    for i := 0 to high(InstObjects) do
+      InstObjects[i].SaveMaterials(ini, 'Object' + IntToStr(i));
+  finally
+    ini.Free;
+  end;
+end;
+
+procedure TIPLFILE.LoadMaterialsFromFile(const filen: string);
+var
+  ini: TIniFile;
+  i, count: integer;
+begin
+  if not FileExists(filen) then
+    exit;
+  ini := TIniFile.Create(filen);
+  try
+    count := Min(ini.ReadInteger('Materials', 'ObjectCount', 0), length(InstObjects));
+    for i := 0 to count - 1 do
+      InstObjects[i].LoadMaterials(ini, 'Object' + IntToStr(i));
+  finally
+    ini.Free;
+  end;
 end;
 
 procedure TINST.SetGTARotation(x, y, z: single);
