@@ -26,6 +26,10 @@ Prebuilt versions are published on the [Releases page](https://github.com/mgmold
 
 The release workflow can also be started manually from [GitHub Actions](https://github.com/mgmoldova/samp-map-editor/actions/workflows/release.yml).
 
+## Building
+
+See the detailed Russian-language [BUILD.md](BUILD.md) for tool downloads, Delphi configuration, external DLL requirements, IDE and command-line builds, troubleshooting, smoke tests, and release preparation.
+
 ## Requirements
 
 To run the editor:
